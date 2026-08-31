@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Restores the saved theme BEFORE the page paints. Must stay in <head>:
+     if this runs at the bottom of the body the page flashes the wrong
+     colours for a moment on every reload. -->
+<script>
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+  })();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     FILL IN #1 — the browser tab title
+     ════════════════════════════════════════════════════════════════════ -->
+<title>Sports Ball Classifier</title>
+
+<style>
+/* ─────────────────────────────────────────────────────────────────────
+   THEME TOKENS.  Light values live on :root, dark values are repeated
+   twice: once for the OS setting, once for the manual toggle.
+   ───────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+  --surface:    #fcfcfb;
+  --card:       #ffffff;
+  --border:     #e4e3df;
+  --track:      #eeedea;
+  --ink:        #0b0b0b;
+  --ink-2:      #52514e;
+  --ink-3:      #86847e;
+  --accent:     #0b0b0b;
+  --accent-ink: #ffffff;
+  --bad:        #b32b2a;
+  --bad-bg:     #fdf0ef;
+
+  /* Categorical series slots — assigned to classes in model order.
+     Validated palette: do not re-order, do not add a 9th. */
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface:#141413; --card:#1a1a19; --border:#33322f; --track:#2a2926;
+    --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8a8981;
+    --accent:#ffffff; --accent-ink:#141413;
+    --bad:#e66767; --bad-bg:#2a1a1a;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface:#141413; --card:#1a1a19; --border:#33322f; --track:#2a2926;
+  --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8a8981;
+  --accent:#ffffff; --accent-ink:#141413;
+  --bad:#e66767; --bad-bg:#2a1a1a;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--surface); color: var(--ink);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 1000px; margin: 0 auto; padding: 32px 20px 64px; }
+
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+h1 { font-size: 28px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.02em; }
+.sub { color: var(--ink-2); font-size: 14px; margin: 0; }
+.head-right { display: flex; align-items: center; gap: 10px; }
+
+.pill { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border);
+        border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 500; color: var(--ink-2); }
+.dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.pill.loading { color: #a06a00; } .pill.loading .dot { animation: pulse 1.2s ease-in-out infinite; }
+.pill.ready   { color: #12805a; }
+.pill.failed  { color: var(--bad); }
+@keyframes pulse { 50% { opacity: .3; } }
+
+.icon-btn { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; cursor: pointer;
+            background: var(--card); color: var(--ink-2); border: 1px solid var(--border); border-radius: 9px; }
+.icon-btn:hover { color: var(--ink); }
+.icon-btn svg[hidden] { display: none; }
+
+.grid { display: grid; gap: 18px; grid-template-columns: 1fr; }
+@media (min-width: 860px) { .grid { grid-template-columns: 1.25fr 1fr; align-items: start; } }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+.card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3);
+           margin: 0 0 14px; font-weight: 600; }
+
+#drop { border: 2px dashed var(--border); border-radius: 11px; padding: 44px 20px; text-align: center;
+        cursor: pointer; transition: border-color .15s, background .15s; }
+#drop:hover, #drop.over { border-color: var(--ink-3); background: var(--surface); }
+#drop p { margin: 6px 0 0; font-size: 14px; font-weight: 500; }
+#drop small { color: var(--ink-3); font-size: 12px; }
+.up-icon { width: 40px; height: 40px; margin: 0 auto; display: grid; place-items: center;
+           border-radius: 10px; background: var(--accent); color: var(--accent-ink); }
+
+#stage { display: none; position: relative; border: 1px solid var(--border); border-radius: 11px;
+         overflow: hidden; background: var(--surface); }
+#preview { display: block; margin: 0 auto; max-height: 320px; max-width: 100%; object-fit: contain; }
+.thumb-chip { position: absolute; right: 10px; bottom: 10px; background: var(--card);
+              border: 1px solid var(--border); border-radius: 8px; padding: 5px; text-align: center; }
+#thumb { width: 64px; height: 64px; border-radius: 4px; image-rendering: pixelated; display: block; }
+.thumb-chip span { font-size: 9px; color: var(--ink-3); display: block; margin-top: 3px; }
+
+.row { display: flex; gap: 9px; margin-top: 16px; }
+button { font: inherit; font-weight: 600; border-radius: 10px; cursor: pointer; padding: 11px 16px; border: 1px solid var(--border); }
+.btn-ghost { flex: 1; background: var(--card); color: var(--ink); }
+.btn-ghost:hover { background: var(--surface); }
+.btn-main { flex: 2; background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.btn-main:disabled { opacity: .4; cursor: not-allowed; }
+
+#err { display: none; margin-top: 14px; padding: 11px 13px; border-radius: 9px;
+       background: var(--bad-bg); color: var(--bad); font-size: 13px; }
+
+.empty { color: var(--ink-3); font-size: 13px; text-align: center; padding: 36px 0; }
+
+#verdict { display: none; text-align: center; padding: 20px 14px; border-radius: 11px; margin-bottom: 20px; }
+#verdict .big { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+#verdict .small { font-size: 12px; color: var(--ink-2); margin-top: 3px; }
+#verdict .emoji { font-size: 30px; line-height: 1; margin-bottom: 8px; }
+
+#bars { display: none; }
+.bar-row { margin-bottom: 13px; }
+.bar-top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 5px; }
+.bar-name { display: flex; align-items: center; gap: 7px; font-weight: 500; color: var(--ink); }
+.swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.bar-val { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12px; }
+.bar-track { height: 10px; background: var(--track); border-radius: 0 4px 4px 0; }
+.bar-fill { height: 100%; width: 0; border-radius: 0 4px 4px 0; transition: width .6s cubic-bezier(.2,.8,.2,1); }
+
+#meta { display: none; justify-content: space-between; border-top: 1px solid var(--border);
+        margin-top: 18px; padding-top: 14px; font-size: 12px; color: var(--ink-3); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <!-- ════════════════════════════════════════════════════════════
+           FILL IN #2 — the heading and one-line description
+           ════════════════════════════════════════════════════════════ -->
+      <h1>My Classifier</h1>
+      <p class="sub">Upload a photo or PASTE an image and the model will tell you which sports ball it is.</p>
+    </div>
+    <div class="head-right">
+      <span id="status" class="pill loading"><span class="dot"></span><span id="status-text">Loading model…</span></span>
+      <button id="theme" class="icon-btn" aria-label="Switch to dark mode">
+        <svg id="icon-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg id="icon-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" hidden><circle cx="12" cy="12" r="4.6"/><path d="M12 1.4v2.6M12 20v2.6M1.4 12h2.6M20 12h2.6M4.4 4.4l1.9 1.9M17.7 17.7l1.9 1.9M19.6 4.4l-1.9 1.9M6.3 17.7l-1.9 1.9"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- ── LEFT: input ─────────────────────────────────────────────── -->
+    <section class="card">
+      <h2>Input image</h2>
+
+      <div id="drop" role="button" tabindex="0">
+        <div class="up-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <p>Click, drag an image here, or paste</p>
+        <small id="drop-hint">JPEG, PNG or WebP</small>
+      </div>
+
+      <input type="file" id="file" accept="image/jpeg,image/png,image/webp" hidden>
+
+      <div id="stage">
+        <img id="preview" alt="Selected image">
+        <div class="thumb-chip">
+          <canvas id="thumb"></canvas>
+          <span id="thumb-label">—</span>
+        </div>
+      </div>
+
+      <div class="row" id="controls" style="display:none">
+        <button class="btn-ghost" id="clear">Clear</button>
+        <button class="btn-main"  id="run" disabled>Run inference</button>
+      </div>
+
+      <div id="err"></div>
+    </section>
+
+    <!-- ── RIGHT: results ──────────────────────────────────────────── -->
+    <section class="card">
+      <h2>Prediction</h2>
+      <div class="empty" id="empty">Results will appear here.</div>
+      <div id="verdict">
+        <div class="emoji" id="verdict-emoji"></div>
+        <div class="big" id="verdict-label"></div>
+        <div class="small" id="verdict-note"></div>
+      </div>
+      <div id="bars"></div>
+      <div id="meta"><span id="meta-time"></span><span id="meta-shape"></span></div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     THE MODEL.  Both files must sit in this same folder, unedited.
+     Order matters: the glue file first, then run-impulse.js.
+     ════════════════════════════════════════════════════════════════════ -->
+<script src="edge-impulse-standalone.js"></script>
+<script src="run-impulse.js"></script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   FILL IN #3 — everything you might want to change lives in this block.
+   Nothing below it needs editing when you swap models.
+   ══════════════════════════════════════════════════════════════════════ */
+const CONFIG = {
+
+  // Biggest file a user may upload, in megabytes.
+  maxFileMB: 5,
+
+  // Minimum confidence before the app commits to an answer.
+  //   null  → use the threshold you set in Edge Impulse
+  //   0.6   → force your own value
+  //   0     → always show the top class, never say "Not sure"
+  threshold: null,
+
+  // What to show when nothing clears the threshold.
+  unsureLabel: "Not sure",
+  unsureNote:  "No class was confident enough.",
+
+  // OPTIONAL. An emoji per class name. Classes you leave out just get no
+  // emoji — everything still works. Names must match your model's labels.
+  emoji: {
+    // "basketball": "🐱",
+    // "dog": "🐶",
+  },
+};
+/* ══════════════════════════ END OF FILL-IN AREA ══════════════════════ */
+
+
+// ── State ────────────────────────────────────────────────────────────
+let classifier = null;   // the Edge Impulse wrapper
+let props      = null;   // what the model says about itself
+let imageReady = false;
+
+const $ = (id) => document.getElementById(id);
+const SLOTS = ['--s1','--s2','--s3','--s4','--s5','--s6','--s7','--s8'];
+
+// Colour belongs to the CLASS, not to its rank — so it is looked up by the
+// label's position in the model's own list and never changes when the bars
+// are re-sorted by score.
+const colorFor = (label) => {
+  const i = props.labels.indexOf(label);
+  return `var(${SLOTS[(i < 0 ? 0 : i) % SLOTS.length]})`;
+};
+const pretty = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+
+// ── 1. Dark-mode toggle ──────────────────────────────────────────────
+// The saved theme was already applied up in <head>. All that is left here
+// is flipping it and keeping the button's icon in sync.
+
+// Dark if the user picked dark, or if they picked nothing and their OS is dark.
+const isDark = () =>
+  (document.documentElement.dataset.theme ||
+   (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
+
+// Show the icon for what the button will DO: a sun while dark, a moon while light.
+function syncThemeIcon() {
+  const dark = isDark();
+  // toggleAttribute, not .hidden — an <svg> is not an HTMLElement, so
+  // svg.hidden = true only sets a JS property and the CSS never reacts.
+  $('icon-sun').toggleAttribute('hidden', !dark);
+  $('icon-moon').toggleAttribute('hidden', dark);
+  $('theme').setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+}
+syncThemeIcon();
+
+$('theme').onclick = () => {
+  const next = isDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem('theme', next);
+  syncThemeIcon();
+};
+
+// If the user never chose, follow the OS when it changes.
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (!localStorage.getItem('theme')) syncThemeIcon();
+});
+
+
+// ── 2. Load the model ────────────────────────────────────────────────
+// init() resolves once the .wasm has downloaded and compiled. Until then
+// the Run button stays disabled.
+(async () => {
+  try {
+    classifier = new EdgeImpulseClassifier();
+    await classifier.init();
+    props = classifier.getProperties();
+
+    // The model tells us its own input size — never hardcode it.
+    $('thumb').width  = props.input_width;
+    $('thumb').height = props.input_height;
+    $('thumb-label').textContent = `${props.input_width}×${props.input_height}`;
+    $('meta-shape').textContent  = `${props.input_width}×${props.input_height} RGB`;
+    $('drop-hint').textContent   = `JPEG, PNG or WebP · up to ${CONFIG.maxFileMB}MB`;
+
+    setStatus('ready', `Ready · ${props.labels.length} classes`);
+    if (imageReady) $('run').disabled = false;
+  } catch (e) {
+    setStatus('failed', 'Model failed to load');
+    showError('Could not load the model: ' + (e.message || e) +
+              '  —  are edge-impulse-standalone.js and .wasm in this folder, and are you opening the page over http (not file://)?');
+  }
+})();
+
+function setStatus(kind, text) {
+  $('status').className = 'pill ' + kind;
+  $('status-text').textContent = text;
+}
+function showError(msg) { $('err').textContent = msg; $('err').style.display = 'block'; }
+function hideError()    { $('err').style.display = 'none'; }
+
+
+// ── 3. Take an image in ──────────────────────────────────────────────
+function loadFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  if (file.size > CONFIG.maxFileMB * 1024 * 1024) {
+    return showError(`That file is ${(file.size / 1048576).toFixed(1)}MB — the limit is ${CONFIG.maxFileMB}MB.`);
+  }
+  hideError();
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = $('preview');
+    img.onload = () => {            // set the handler BEFORE src, not after
+      drawThumb(img);
+      imageReady = true;
+      $('drop').style.display     = 'none';
+      $('stage').style.display    = 'block';
+      $('controls').style.display = 'flex';
+      $('run').disabled = !props;
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Centre-crop to a square, then squash to the model's input size.
+// naturalWidth/naturalHeight are the REAL pixels — img.width/height are the
+// on-screen CSS size and would crop the wrong region.
+function drawThumb(img) {
+  const c   = $('thumb');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  const side = Math.min(img.naturalWidth, img.naturalHeight);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(img,
+    (img.naturalWidth  - side) / 2,   // source x
+    (img.naturalHeight - side) / 2,   // source y
+    side, side,                       // source w/h
+    0, 0, c.width, c.height);         // destination
+}
+
+$('drop').onclick   = () => $('file').click();
+$('drop').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') $('file').click(); };
+$('file').onchange  = (e) => loadFile(e.target.files[0]);
+
+$('drop').ondragover  = (e) => { e.preventDefault(); $('drop').classList.add('over'); };
+$('drop').ondragleave = () => $('drop').classList.remove('over');
+$('drop').ondrop      = (e) => { e.preventDefault(); $('drop').classList.remove('over'); loadFile(e.dataTransfer.files[0]); };
+window.addEventListener('paste', (e) => {
+  for (const item of e.clipboardData.items) if (item.kind === 'file') loadFile(item.getAsFile());
+});
+
+$('clear').onclick = () => {
+  imageReady = false;
+  $('file').value = '';
+  $('preview').src = '';
+  $('stage').style.display = 'none';
+  $('controls').style.display = 'none';
+  $('drop').style.display = 'block';
+  $('empty').style.display = 'block';
+  $('verdict').style.display = 'none';
+  $('bars').style.display = 'none';
+  $('meta').style.display = 'none';
+  hideError();
+};
+
+
+// ── 4. Run the model ─────────────────────────────────────────────────
+$('run').onclick = () => {
+  if (!props || !imageReady) return;
+  $('run').disabled = true;
+  $('run').textContent = 'Running…';
+  hideError();
+
+  // classify() blocks the main thread for ~50-100ms, so hand the browser one
+  // frame to paint the "Running…" state before we freeze it.
+  setTimeout(() => {
+    try {
+      const c = $('thumb');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+
+      // Edge Impulse wants ONE number per pixel: red, green and blue packed
+      // into a single integer as 0xRRGGBB.
+      const features = [];
+      for (let i = 0; i < d.length; i += 4) {
+        features.push((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+      }
+
+      const t0  = performance.now();
+      const out = classifier.classify(features);
+      const ms  = performance.now() - t0;
+
+      render(out.results, ms);
+    } catch (e) {
+      showError('Inference failed: ' + (e.message || e));
+    } finally {
+      $('run').disabled = false;
+      $('run').textContent = 'Run inference';
+    }
+  }, 40);
+};
+
+
+// ── 5. Show the answer ───────────────────────────────────────────────
+function render(results, ms) {
+  const ranked = [...results].sort((a, b) => b.value - a.value);
+  const top    = ranked[0];
+  const limit  = CONFIG.threshold ?? props.classification_threshold ?? 0;
+  const sure   = top.value >= limit;
+
+  $('empty').style.display   = 'none';
+  $('verdict').style.display = 'block';
+  $('bars').style.display    = 'block';
+  $('meta').style.display    = 'flex';
+
+  // Verdict card
+  const pct = Math.round(top.value * 100);
+  $('verdict').style.background = sure ? 'var(--surface)' : 'var(--track)';
+  $('verdict-emoji').textContent = sure ? (CONFIG.emoji[top.label] || '') : '🤔';
+  $('verdict-label').textContent = sure ? pretty(top.label) : CONFIG.unsureLabel;
+  $('verdict-label').style.color = sure ? colorFor(top.label) : 'var(--ink-2)';
+  $('verdict-note').textContent  = sure
+    ? `${pct}% confident · ${pct >= 90 ? 'high' : pct >= 70 ? 'moderate' : 'low'}`
+    : `${CONFIG.unsureNote} Best guess: ${pretty(top.label)} at ${pct}%.`;
+
+  // One labelled bar per class. Every bar carries its name and its exact
+  // percentage as text, so colour is never the only thing telling them apart.
+  $('bars').innerHTML = '';
+  for (const r of ranked) {
+    const pctText = (r.value * 100).toFixed(1) + '%';
+    const row = document.createElement('div');
+    row.className = 'bar-row';
+    row.innerHTML =
+      '<div class="bar-top">' +
+        '<span class="bar-name"><span class="swatch"></span>' + pretty(r.label) + '</span>' +
+        '<span class="bar-val">' + pctText + '</span>' +
+      '</div>' +
+      '<div class="bar-track"><div class="bar-fill"></div></div>';
+    row.querySelector('.swatch').style.background   = colorFor(r.label);
+    row.querySelector('.bar-fill').style.background = colorFor(r.label);
+    $('bars').appendChild(row);
+    requestAnimationFrame(() => { row.querySelector('.bar-fill').style.width = pctText; });
+  }
+
+  $('meta-time').textContent = Math.round(ms) + 'ms';
+}
+</script>
+</body>
+</html>
